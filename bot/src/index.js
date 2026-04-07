@@ -21,6 +21,7 @@ const {
   getUserSession,
   updateUserSession
 } = require('./supabase');
+const { getModelList, getDefaultModel, setDefaultModel, MODELS } = require('./ai');
 
 const app = express();
 const server = http.createServer(app);
@@ -71,11 +72,13 @@ io.on('connection', (socket) => {
   });
 });
 
+// Bot Status
 app.get('/api/status', (req, res) => {
   const status = getConnectionStatus();
   res.json(status);
 });
 
+// QR Code
 app.get('/api/qr', (req, res) => {
   const qr = getQRCode();
   if (qr) {
@@ -85,6 +88,24 @@ app.get('/api/qr', (req, res) => {
   }
 });
 
+// AI Models
+app.get('/api/models', (req, res) => {
+  const models = getModelList();
+  const current = getDefaultModel();
+  res.json({ models, current });
+});
+
+app.put('/api/models/current', (req, res) => {
+  const { model } = req.body;
+  if (model) {
+    setDefaultModel(model);
+    res.json({ success: true, current: model });
+  } else {
+    res.status(400).json({ error: 'Model is required' });
+  }
+});
+
+// Chat History
 app.get('/api/chat', async (req, res) => {
   const page = parseInt(req.query.page) || 1;
   const limit = parseInt(req.query.limit) || 20;
@@ -100,6 +121,7 @@ app.get('/api/chat', async (req, res) => {
   res.json(result);
 });
 
+// Statistics
 app.get('/api/stats', async (req, res) => {
   const stats = await getStats();
   res.json(stats);
@@ -111,6 +133,7 @@ app.get('/api/stats/daily', async (req, res) => {
   res.json(data);
 });
 
+// Knowledge Management
 app.get('/api/knowledge', async (req, res) => {
   const category = req.query.category;
   if (category) {
@@ -138,6 +161,7 @@ app.delete('/api/knowledge/:id', async (req, res) => {
   res.json({ success });
 });
 
+// Events Management
 app.get('/api/events', async (req, res) => {
   const data = await getActiveEvents();
   res.json(data);
@@ -153,6 +177,7 @@ app.delete('/api/events/:id', async (req, res) => {
   res.json({ success });
 });
 
+// User Sessions
 app.get('/api/sessions', async (req, res) => {
   const phoneNumber = req.query.phone;
   if (phoneNumber) {
@@ -165,6 +190,9 @@ app.get('/api/sessions', async (req, res) => {
 
 async function startBot() {
   console.log('🚀 Starting WA Bot PORMIKI...');
+  console.log('🤖 Using AgentRouter AI');
+  console.log('📋 Available models:', MODELS.map(m => m.name).join(', '));
+  
   await startWhatsApp(io);
   server.listen(DASHBOARD_PORT, () => {
     console.log(`📡 Bot API server running on port ${DASHBOARD_PORT}`);

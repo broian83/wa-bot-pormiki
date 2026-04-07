@@ -1,9 +1,20 @@
 require('dotenv').config();
 const fetch = (...args) => import('node-fetch').then(({ default: fetch }) => fetch(...args));
 
-const OPENROUTER_API_KEY = process.env.OPENROUTER_API_KEY;
-const OPENROUTER_MODEL = process.env.OPENROUTER_MODEL || 'meta-llama/llama-3.3-70b-instruct';
-const OPENROUTER_API_URL = 'https://openrouter.ai/api/v1/chat/completions';
+const AGENTROUTER_API_KEY = process.env.AGENTROUTER_API_KEY;
+const DEFAULT_MODEL = process.env.DEFAULT_MODEL || 'meta-llama/llama-3.3-70b-instruct';
+const AGENTROUTER_API_URL = 'https://api.agentrouter.org/v1/chat/completions';
+
+const MODELS = [
+  { id: 'meta-llama/llama-3.3-70b-instruct', name: 'Llama 3.3 70B', provider: 'Meta' },
+  { id: 'openai/gpt-4o', name: 'GPT-4o', provider: 'OpenAI' },
+  { id: 'openai/gpt-4o-mini', name: 'GPT-4o Mini', provider: 'OpenAI' },
+  { id: 'anthropic/claude-3.5-sonnet', name: 'Claude 3.5 Sonnet', provider: 'Anthropic' },
+  { id: 'google/gemini-2.0-flash-exp', name: 'Gemini 2.0 Flash', provider: 'Google' },
+  { id: 'mistralai/mistral-small-3.1', name: 'Mistral Small 3.1', provider: 'Mistral' },
+  { id: 'deepseek/deepseek-chat', name: 'DeepSeek Chat', provider: 'DeepSeek' },
+  { id: 'qwen/qwen2.5-72b-instruct', name: 'Qwen 2.5 72B', provider: 'Alibaba' },
+];
 
 const SYSTEM_PROMPT = `Kamu adalah asisten virtual resmi PORMIKI (Perekam Medis dan Informasi Kesehatan Indonesia).
 
@@ -27,15 +38,31 @@ FORMAT JAWABAN:
 - Gunakan emoji yang relevan
 - Break line yang rapi untuk WhatsApp`;
 
+function getModelList() {
+  return MODELS;
+}
+
+function getDefaultModel() {
+  return DEFAULT_MODEL;
+}
+
+function setDefaultModel(model) {
+  process.env.DEFAULT_MODEL = model;
+}
+
 async function generateResponse(userMessage, knowledgeContext = [], sessionMode = 'ai') {
   if (sessionMode === 'admin') {
     return null;
   }
 
+  return generateResponseWithModel(userMessage, knowledgeContext, DEFAULT_MODEL);
+}
+
+async function generateResponseWithModel(userMessage, knowledgeContext, model) {
   let contextText = '';
   if (knowledgeContext.length > 0) {
     contextText = '\n\nINFORMASI YANG TERSEDIA:\n';
-    knowledgeContext.forEach((k, i) => {
+    knowledgeContext.forEach((k) => {
       contextText += `\n[${k.category || 'info'}] ${k.jawaban}\n`;
     });
   } else {
@@ -48,16 +75,16 @@ async function generateResponse(userMessage, knowledgeContext = [], sessionMode 
   ];
 
   try {
-    const response = await fetch(OPENROUTER_API_URL, {
+    const response = await fetch(AGENTROUTER_API_URL, {
       method: 'POST',
       headers: {
-        'Authorization': `Bearer ${OPENROUTER_API_KEY}`,
+        'Authorization': `Bearer ${AGENTROUTER_API_KEY}`,
         'Content-Type': 'application/json',
         'HTTP-Referer': 'https://pormiki.or.id',
         'X-Title': 'WA Bot PORMIKI'
       },
       body: JSON.stringify({
-        model: OPENROUTER_MODEL,
+        model: model || DEFAULT_MODEL,
         messages,
         max_tokens: 1000,
         temperature: 0.7
@@ -66,7 +93,7 @@ async function generateResponse(userMessage, knowledgeContext = [], sessionMode 
 
     if (!response.ok) {
       const errorData = await response.json();
-      console.error('OpenRouter API error:', errorData);
+      console.error('AgentRouter API error:', errorData);
       return '⚠️ Maaf, terjadi kesalahan pada sistem. Silakan coba lagi nanti atau hubungi admin.';
     }
 
@@ -79,50 +106,12 @@ async function generateResponse(userMessage, knowledgeContext = [], sessionMode 
   }
 }
 
-async function generateResponseWithModel(userMessage, knowledgeContext, model) {
-  const contextText = knowledgeContext.length > 0
-    ? '\n\nINFORMASI YANG TERSEDIA:\n' + knowledgeContext.map(k => `\n[${k.category || 'info'}] ${k.jawaban}\n`).join('')
-    : '\n\nINFORMASI YANG TERSEDIA:\nTidak ada informasi spesifik yang cocok.\n';
-
-  const messages = [
-    { role: 'system', content: SYSTEM_PROMPT + contextText },
-    { role: 'user', content: userMessage }
-  ];
-
-  try {
-    const response = await fetch(OPENROUTER_API_URL, {
-      method: 'POST',
-      headers: {
-        'Authorization': `Bearer ${OPENROUTER_API_KEY}`,
-        'Content-Type': 'application/json',
-        'HTTP-Referer': 'https://pormiki.or.id',
-        'X-Title': 'WA Bot PORMIKI'
-      },
-      body: JSON.stringify({
-        model: model || OPENROUTER_MODEL,
-        messages,
-        max_tokens: 1000,
-        temperature: 0.7
-      })
-    });
-
-    if (!response.ok) {
-      const errorData = await response.json();
-      console.error('OpenRouter API error:', errorData);
-      return '⚠️ Maaf, terjadi kesalahan pada sistem.';
-    }
-
-    const data = await response.json();
-    return data.choices?.[0]?.message?.content || '⚠️ Maaf, saya tidak dapat memproses pertanyaan Anda.';
-
-  } catch (error) {
-    console.error('AI generation error:', error.message);
-    return '⚠️ Maaf, terjadi kesalahan koneksi.';
-  }
-}
-
 module.exports = {
   generateResponse,
   generateResponseWithModel,
+  getModelList,
+  getDefaultModel,
+  setDefaultModel,
+  MODELS,
   SYSTEM_PROMPT
 };

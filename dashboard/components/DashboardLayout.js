@@ -14,6 +14,7 @@ const navItems = [
   { name: 'Knowledge', href: '/knowledge', icon: BookOpen },
   { name: 'Stats', href: '/stats', icon: BarChart3 },
   { name: 'QR Code', href: '/qr', icon: QrCode },
+  { name: 'Settings', href: '/settings', icon: Settings },
 ]
 
 export default function DashboardLayout({ children }) {
