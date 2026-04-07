@@ -1,19 +1,23 @@
 require('dotenv').config();
 const fetch = (...args) => import('node-fetch').then(({ default: fetch }) => fetch(...args));
 
-const AGENTROUTER_API_KEY = process.env.AGENTROUTER_API_KEY;
-const DEFAULT_MODEL = process.env.DEFAULT_MODEL || 'meta-llama/llama-3.3-70b-instruct';
-const AGENTROUTER_API_URL = 'https://api.agentrouter.org/v1/chat/completions';
+const SUMOPOD_API_KEY = process.env.SUMOPOD_API_KEY;
+const DEFAULT_MODEL = process.env.DEFAULT_MODEL || 'gpt-4o-mini';
+const SUMOPOD_API_URL = 'https://ai.sumopod.com/v1/chat/completions';
 
 const MODELS = [
-  { id: 'meta-llama/llama-3.3-70b-instruct', name: 'Llama 3.3 70B', provider: 'Meta' },
-  { id: 'openai/gpt-4o', name: 'GPT-4o', provider: 'OpenAI' },
-  { id: 'openai/gpt-4o-mini', name: 'GPT-4o Mini', provider: 'OpenAI' },
-  { id: 'anthropic/claude-3.5-sonnet', name: 'Claude 3.5 Sonnet', provider: 'Anthropic' },
-  { id: 'google/gemini-2.0-flash-exp', name: 'Gemini 2.0 Flash', provider: 'Google' },
-  { id: 'mistralai/mistral-small-3.1', name: 'Mistral Small 3.1', provider: 'Mistral' },
-  { id: 'deepseek/deepseek-chat', name: 'DeepSeek Chat', provider: 'DeepSeek' },
-  { id: 'qwen/qwen2.5-72b-instruct', name: 'Qwen 2.5 72B', provider: 'Alibaba' },
+  { id: 'gpt-4o', name: 'GPT-4o', provider: 'OpenAI' },
+  { id: 'gpt-4o-mini', name: 'GPT-4o Mini', provider: 'OpenAI' },
+  { id: 'gpt-4-turbo', name: 'GPT-4 Turbo', provider: 'OpenAI' },
+  { id: 'gpt-3.5-turbo', name: 'GPT-3.5 Turbo', provider: 'OpenAI' },
+  { id: 'claude-3-opus', name: 'Claude 3 Opus', provider: 'Anthropic' },
+  { id: 'claude-3-sonnet', name: 'Claude 3 Sonnet', provider: 'Anthropic' },
+  { id: 'gemini-1.5-pro', name: 'Gemini 1.5 Pro', provider: 'Google' },
+  { id: 'gemini-1.5-flash', name: 'Gemini 1.5 Flash', provider: 'Google' },
+  { id: 'llama-3.1-70b', name: 'Llama 3.1 70B', provider: 'Meta' },
+  { id: 'llama-3.1-8b', name: 'Llama 3.1 8B', provider: 'Meta' },
+  { id: 'mistral-large', name: 'Mistral Large', provider: 'Mistral' },
+  { id: 'deepseek-chat', name: 'DeepSeek Chat', provider: 'DeepSeek' },
 ];
 
 const SYSTEM_PROMPT = `Kamu adalah asisten virtual resmi PORMIKI (Perekam Medis dan Informasi Kesehatan Indonesia).
@@ -75,13 +79,11 @@ async function generateResponseWithModel(userMessage, knowledgeContext, model) {
   ];
 
   try {
-    const response = await fetch(AGENTROUTER_API_URL, {
+    const response = await fetch(SUMOPOD_API_URL, {
       method: 'POST',
       headers: {
-        'Authorization': `Bearer ${AGENTROUTER_API_KEY}`,
-        'Content-Type': 'application/json',
-        'HTTP-Referer': 'https://pormiki.or.id',
-        'X-Title': 'WA Bot PORMIKI'
+        'Authorization': `Bearer ${SUMOPOD_API_KEY}`,
+        'Content-Type': 'application/json'
       },
       body: JSON.stringify({
         model: model || DEFAULT_MODEL,
@@ -93,7 +95,7 @@ async function generateResponseWithModel(userMessage, knowledgeContext, model) {
 
     if (!response.ok) {
       const errorData = await response.json();
-      console.error('AgentRouter API error:', errorData);
+      console.error('SumoPod API error:', errorData);
       return '⚠️ Maaf, terjadi kesalahan pada sistem. Silakan coba lagi nanti atau hubungi admin.';
     }
 
