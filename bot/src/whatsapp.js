@@ -2,10 +2,8 @@ const {
   default: makeWASocket,
   DisconnectReason,
   useMultiFileAuthState,
-  fetchLatestBaileysVersion,
   Browsers
 } = require('@whiskeysockets/baileys');
-const { Boom } = require('@hapi/boom');
 const pino = require('pino');
 const path = require('path');
 const fs = require('fs');
@@ -35,17 +33,36 @@ const authStateDir = path.join(__dirname, '..', 'auth_info_baileys');
 let sock = null;
 let qrCode = null;
 let isConnected = false;
+let reconnectTimer = null;
+let isStarting = false;
+
+function extractDisconnectReason(lastDisconnect) {
+  const error = lastDisconnect?.error;
+  const boomStatus = error?.output?.statusCode;
+  const streamCode = Number(error?.data?.attrs?.code || error?.output?.payload?.attrs?.code);
+  const reason = Number.isFinite(boomStatus) ? boomStatus : (Number.isFinite(streamCode) ? streamCode : null);
+  return { reason, error };
+}
+
+function scheduleReconnect(io, delayMs = 3000) {
+  if (reconnectTimer) return;
+  reconnectTimer = setTimeout(() => {
+    reconnectTimer = null;
+    startWhatsApp(io);
+  }, delayMs);
+}
 
 async function startWhatsApp(io) {
+  if (isStarting) return sock;
+  isStarting = true;
+
   const { state, saveCreds } = await useMultiFileAuthState(authStateDir);
-  const { version } = await fetchLatestBaileysVersion();
 
   sock = makeWASocket({
-    version,
     logger: pino({ level: 'silent' }),
     auth: state,
-    browser: Browsers.ubuntu('Chrome'),
-    printQRInTerminal: true,
+    browser: Browsers.macOS('Chrome'),
+    countryCode: 'ID',
     generateHighQualityLinkPreview: true
   });
 
@@ -63,20 +80,36 @@ async function startWhatsApp(io) {
     }
 
     if (connection === 'close') {
-      const reason = new Boom(lastDisconnect?.error)?.output?.statusCode;
+      const { reason, error } = extractDisconnectReason(lastDisconnect);
       isConnected = false;
       await updateBotSession('disconnected');
       if (io) {
         io.emit('connection_update', { status: 'disconnected' });
       }
 
-      if (reason === DisconnectReason.loggedOut) {
+      console.log('WhatsApp disconnected:', {
+        reason: reason ?? 'unknown',
+        message: error?.message || 'no error message',
+        attrsCode: error?.data?.attrs?.code || error?.output?.payload?.attrs?.code || null,
+        attrsText: error?.data?.attrs?.text || error?.output?.payload?.attrs?.text || null,
+        data: error?.data || null
+      });
+
+      const shouldResetAuth = [
+        DisconnectReason.loggedOut,
+        DisconnectReason.badSession,
+        DisconnectReason.multideviceMismatch,
+        DisconnectReason.forbidden,
+        405
+      ].includes(reason);
+
+      if (shouldResetAuth) {
         console.log('❌ Logged out. Please re-scan QR.');
         fs.rmSync(authStateDir, { recursive: true, force: true });
-        setTimeout(() => startWhatsApp(io), 3000);
+        scheduleReconnect(io);
       } else {
         console.log('🔄 Reconnecting...', reason);
-        setTimeout(() => startWhatsApp(io), 3000);
+        scheduleReconnect(io);
       }
     } else if (connection === 'open') {
       isConnected = true;
@@ -117,6 +150,7 @@ async function startWhatsApp(io) {
     await handleMessage(from, phoneNumber, pushName, messageText.trim(), io);
   });
 
+  isStarting = false;
   return sock;
 }
 
@@ -225,3 +259,6 @@ module.exports = {
   getConnectionStatus,
   getSocket
 };
+
+
+
