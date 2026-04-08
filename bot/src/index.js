@@ -21,7 +21,7 @@ const {
   getUserSession,
   updateUserSession
 } = require('./supabase');
-const { getModelList, getDefaultModel, setDefaultModel, MODELS } = require('./ai');
+const { getModelList, getDefaultModel, setDefaultModel, getApiKey, setApiKey, MODELS } = require('./ai');
 
 const app = express();
 const server = http.createServer(app);
@@ -102,6 +102,27 @@ app.put('/api/models/current', (req, res) => {
     res.json({ success: true, current: model });
   } else {
     res.status(400).json({ error: 'Model is required' });
+  }
+});
+
+// AI API Key
+app.get('/api/apikey', (req, res) => {
+  const apiKey = getApiKey();
+  if (apiKey) {
+    const masked = apiKey.substring(0, 8) + '...' + apiKey.substring(apiKey.length - 4);
+    res.json({ apiKey: masked, hasKey: true });
+  } else {
+    res.json({ apiKey: null, hasKey: false });
+  }
+});
+
+app.put('/api/apikey', (req, res) => {
+  const { apiKey } = req.body;
+  if (apiKey && apiKey.startsWith('sk-')) {
+    setApiKey(apiKey);
+    res.json({ success: true, message: 'API Key updated successfully' });
+  } else {
+    res.status(400).json({ error: 'Invalid API Key format' });
   }
 });
 
