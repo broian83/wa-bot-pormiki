@@ -1,12 +1,5 @@
-const {
-  default: makeWASocket,
-  DisconnectReason,
-  useMultiFileAuthState,
-  Browsers
-} = require('@whiskeysockets/baileys');
-const pino = require('pino');
+const { Client, LocalAuth } = require('whatsapp-web.js');
 const path = require('path');
-const fs = require('fs');
 
 const {
   searchKnowledge,
@@ -28,149 +21,100 @@ const { handleRegister } = require('./commands/register');
 const { handleAdmin } = require('./commands/admin');
 
 const ADMIN_NUMBER = process.env.BOT_ADMIN_NUMBER;
-const authStateDir = path.join(__dirname, '..', 'auth_info_baileys');
 
-let sock = null;
+let client = null;
 let qrCode = null;
 let isConnected = false;
-let lastDisconnectReason = null;
-let reconnectTimer = null;
-let isStarting = false;
-let isResettingAuth = false;
 
-function extractDisconnectReason(lastDisconnect) {
-  const error = lastDisconnect?.error;
-  const boomStatus = error?.output?.statusCode;
-  const streamCode = Number(error?.data?.attrs?.code || error?.output?.payload?.attrs?.code);
-  const reason = Number.isFinite(boomStatus) ? boomStatus : (Number.isFinite(streamCode) ? streamCode : null);
-  return { reason, error };
-}
-
-function scheduleReconnect(io, delayMs = 3000) {
-  if (reconnectTimer) return;
-  reconnectTimer = setTimeout(() => {
-    reconnectTimer = null;
-    startWhatsApp(io);
-  }, delayMs);
-}
-
-function resetAuthStateDir() {
-  if (isResettingAuth) return;
-  isResettingAuth = true;
-  try {
-    fs.rmSync(authStateDir, { recursive: true, force: true });
-    fs.mkdirSync(authStateDir, { recursive: true });
-  } catch (error) {
-    console.error('Failed to reset auth directory:', error.message);
-  } finally {
-    setTimeout(() => {
-      isResettingAuth = false;
-    }, 1000);
-  }
+function extractDisconnectReason(error) {
+  if (!error) return null;
+  return error.message || 'unknown';
 }
 
 async function startWhatsApp(io) {
-  if (isStarting) return sock;
-  isStarting = true;
+  const authPath = path.join(__dirname, '..', '.wwebjs_auth');
 
-  const { state, saveCreds } = await useMultiFileAuthState(authStateDir);
-
-  sock = makeWASocket({
-    logger: pino({ level: 'silent' }),
-    auth: state,
-    browser: Browsers.macOS('Chrome'),
-    countryCode: 'ID',
-    generateHighQualityLinkPreview: true
+  client = new Client({
+    authStrategy: new LocalAuth({ dataPath: authPath }),
+    puppeteer: {
+      headless: true,
+      args: [
+        '--no-sandbox',
+        '--disable-setuid-sandbox',
+        '--disable-dev-shm-usage',
+        '--disable-accelerated-2d-canvas',
+        '--no-first-run',
+        '--no-zygote',
+        '--disable-gpu'
+      ],
+      executablePath: process.env.CHROME_PATH || undefined
+    },
+    restartOnAuthFail: true
   });
 
-  sock.ev.on('creds.update', saveCreds);
-
-  sock.ev.on('connection.update', async (update) => {
-    const { connection, lastDisconnect, qr } = update;
-
-    if (qr) {
-      qrCode = qr;
-      await updateBotSession('waiting_qr', qr);
-      if (io) {
-        io.emit('qr_update', { qr, status: 'waiting_qr' });
-      }
+  client.on('qr', async (qr) => {
+    qrCode = qr;
+    isConnected = false;
+    await updateBotSession('waiting_qr', qr);
+    if (io) {
+      io.emit('qr_update', { qr, status: 'waiting_qr' });
     }
+    console.log('📱 QR Code received. Scan with WhatsApp');
+  });
 
-    if (connection === 'close') {
-      const { reason, error } = extractDisconnectReason(lastDisconnect);
-      lastDisconnectReason = reason;
-      isConnected = false;
-      await updateBotSession('disconnected');
-      if (io) {
-        io.emit('connection_update', { status: 'disconnected' });
-      }
-
-      console.log('WhatsApp disconnected:', {
-        reason: reason ?? 'unknown',
-        message: error?.message || 'no error message',
-        attrsCode: error?.data?.attrs?.code || error?.output?.payload?.attrs?.code || null,
-        attrsText: error?.data?.attrs?.text || error?.output?.payload?.attrs?.text || null,
-        data: error?.data || null
-      });
-
-      const shouldResetAuth = [
-        DisconnectReason.loggedOut,
-        DisconnectReason.badSession,
-        DisconnectReason.multideviceMismatch,
-        DisconnectReason.forbidden,
-        405
-      ].includes(reason);
-
-      if (shouldResetAuth) {
-        console.log('❌ Logged out. Please re-scan QR.');
-        resetAuthStateDir();
-        scheduleReconnect(io);
-      } else {
-        console.log('🔄 Reconnecting...', reason);
-        scheduleReconnect(io);
-      }
-    } else if (connection === 'open') {
-      isConnected = true;
-      lastDisconnectReason = null;
-      qrCode = null;
-      await updateBotSession('connected');
-      if (io) {
-        io.emit('connection_update', { status: 'connected' });
-      }
-      console.log('✅ WhatsApp connected!');
+  client.on('authenticated', async () => {
+    console.log('✅ WhatsApp authenticated!');
+    qrCode = null;
+    isConnected = true;
+    await updateBotSession('connected');
+    if (io) {
+      io.emit('connection_update', { status: 'connected' });
     }
   });
 
-  sock.ev.on('messages.upsert', async ({ messages, type }) => {
-    if (type !== 'notify') return;
+  client.on('auth_failure', async (msg) => {
+    console.error('❌ Auth failure:', msg);
+    isConnected = false;
+    await updateBotSession('disconnected');
+    if (io) {
+      io.emit('connection_update', { status: 'disconnected', error: msg });
+    }
+  });
 
-    const msg = messages[0];
-    if (!msg.message) return;
+  client.on('disconnected', async (reason) => {
+    console.log('WhatsApp disconnected:', reason);
+    isConnected = false;
+    qrCode = null;
+    await updateBotSession('disconnected');
+    if (io) {
+      io.emit('connection_update', { status: 'disconnected' });
+    }
+  });
 
-    const from = msg.key.remoteJid;
-    if (!from || from.includes('g.us')) return;
+  client.on('ready', async () => {
+    console.log('✅ WhatsApp client ready!');
+    isConnected = true;
+    await updateBotSession('connected');
+    if (io) {
+      io.emit('connection_update', { status: 'connected' });
+    }
+  });
 
-    const phoneNumber = from.replace('@s.whatsapp.net', '');
+  client.on('message', async (msg) => {
+    if (msg.fromMe) return;
+
+    const from = msg.from;
+    const phoneNumber = msg.from.replace('@c.us', '');
     const pushName = msg.pushName || 'User';
-
-    let messageText = '';
-    if (msg.message.conversation) {
-      messageText = msg.message.conversation;
-    } else if (msg.message.extendedTextMessage) {
-      messageText = msg.message.extendedTextMessage.text;
-    } else if (msg.message.imageMessage) {
-      messageText = msg.message.imageMessage.caption || '';
-    } else if (msg.message.videoMessage) {
-      messageText = msg.message.videoMessage.caption || '';
-    }
+    const messageText = msg.body;
 
     if (!messageText.trim()) return;
 
     await handleMessage(from, phoneNumber, pushName, messageText.trim(), io);
   });
 
-  isStarting = false;
-  return sock;
+  await client.initialize();
+  return client;
 }
 
 async function handleMessage(from, phoneNumber, pushName, message, io) {
@@ -183,7 +127,7 @@ async function handleMessage(from, phoneNumber, pushName, message, io) {
 
   if (lowerMsg === '/menu' || lowerMsg === 'menu' || lowerMsg === 'help') {
     const reply = await handleMenu();
-    await sock.sendMessage(from, { text: reply });
+    await client.sendMessage(from, reply);
     await logChat(phoneNumber, pushName, message, reply, null, null, null, userSession.mode);
     return;
   }
@@ -191,7 +135,7 @@ async function handleMessage(from, phoneNumber, pushName, message, io) {
   if (lowerMsg.startsWith('/admin') || lowerMsg.startsWith('/takeover') || lowerMsg.startsWith('/release')) {
     const reply = await handleAdmin(lowerMsg, phoneNumber, pushName);
     if (reply) {
-      await sock.sendMessage(from, { text: reply });
+      await client.sendMessage(from, reply);
       await logChat(phoneNumber, pushName, message, reply, null, null, 'admin_command', userSession.mode);
     }
     return;
@@ -199,28 +143,28 @@ async function handleMessage(from, phoneNumber, pushName, message, io) {
 
   if (lowerMsg.startsWith('/event') || lowerMsg === 'event' || lowerMsg === 'events' || lowerMsg.includes('kegiatan')) {
     const reply = await handleEvent(lowerMsg);
-    await sock.sendMessage(from, { text: reply });
+    await client.sendMessage(from, reply);
     await logChat(phoneNumber, pushName, message, reply, null, null, 'event', userSession.mode);
     return;
   }
 
   if (lowerMsg.startsWith('/faq') || lowerMsg === 'faq') {
     const reply = await handleFaq();
-    await sock.sendMessage(from, { text: reply });
+    await client.sendMessage(from, reply);
     await logChat(phoneNumber, pushName, message, reply, null, null, 'faq', userSession.mode);
     return;
   }
 
   if (lowerMsg.startsWith('/daftar') || lowerMsg === 'daftar' || lowerMsg === 'register') {
     const reply = await handleRegister();
-    await sock.sendMessage(from, { text: reply });
+    await client.sendMessage(from, reply);
     await logChat(phoneNumber, pushName, message, reply, null, null, 'register', userSession.mode);
     return;
   }
 
   if (userSession.mode === 'admin') {
     const reply = `⏳ Pesan Anda sedang dibaca oleh admin kami. Mohon tunggu sebentar, admin akan segera merespons.`;
-    await sock.sendMessage(from, { text: reply });
+    await client.sendMessage(from, reply);
     await logChat(phoneNumber, pushName, message, reply, null, null, null, 'admin');
 
     if (io) {
@@ -238,7 +182,7 @@ async function handleMessage(from, phoneNumber, pushName, message, io) {
   const knowledgeResults = await searchKnowledge(message);
   const aiResponse = await generateResponse(message, knowledgeResults, userSession.mode);
 
-  await sock.sendMessage(from, { text: aiResponse });
+  await client.sendMessage(from, aiResponse);
 
   const matchedKnowledge = knowledgeResults.length > 0 ? knowledgeResults[0].id : null;
   const category = knowledgeResults.length > 0 ? knowledgeResults[0].categories?.nama : null;
@@ -247,26 +191,13 @@ async function handleMessage(from, phoneNumber, pushName, message, io) {
 }
 
 async function sendAdminMessage(phoneNumber, message) {
-  if (!sock || !isConnected) {
+  if (!client || !isConnected) {
     throw new Error('Bot not connected');
   }
 
-  const jid = phoneNumber + '@s.whatsapp.net';
-  await sock.sendMessage(jid, { text: message });
+  const jid = phoneNumber + '@c.us';
+  await client.sendMessage(jid, message);
   return true;
-}
-
-async function requestPairingCode(phoneNumber) {
-  const digits = String(phoneNumber || '').replace(/\D/g, '');
-  if (!digits) {
-    throw new Error('Phone number is required');
-  }
-  if (!sock || typeof sock.requestPairingCode !== 'function') {
-    throw new Error('WhatsApp socket not ready');
-  }
-
-  const code = await sock.requestPairingCode(digits);
-  return code;
 }
 
 function getQRCode() {
@@ -276,26 +207,18 @@ function getQRCode() {
 function getConnectionStatus() {
   return {
     connected: isConnected,
-    qr: qrCode,
-    disconnectReason: lastDisconnectReason
+    qr: qrCode
   };
 }
 
 function getSocket() {
-  return sock;
+  return client;
 }
 
 module.exports = {
   startWhatsApp,
   sendAdminMessage,
-  requestPairingCode,
   getQRCode,
   getConnectionStatus,
   getSocket
 };
-
-
-
-
-
-

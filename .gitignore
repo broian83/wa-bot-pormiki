@@ -21,6 +21,7 @@ build/
 
 # Auth
 auth_info_baileys/
+.wwebjs_auth/
 
 # Logs
 *.log
