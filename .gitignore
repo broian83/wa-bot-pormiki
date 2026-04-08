@@ -2,7 +2,9 @@
 node_modules/
 .pnp
 .pnp.js
-package-lock.json
+
+# Bot package-lock (uncomment if needed)
+# bot/package-lock.json
 
 # Environment
 .env
