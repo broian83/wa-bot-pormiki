@@ -12,6 +12,10 @@ export default function QRPage() {
   const [botStatus, setBotStatus] = useState(null)
   const [loading, setLoading] = useState(true)
   const [refreshing, setRefreshing] = useState(false)
+  const [phoneNumber, setPhoneNumber] = useState('')
+  const [pairingCode, setPairingCode] = useState('')
+  const [pairingLoading, setPairingLoading] = useState(false)
+  const [pairingError, setPairingError] = useState('')
 
   useEffect(() => {
     fetchData()
@@ -42,6 +46,30 @@ export default function QRPage() {
     setRefreshing(false)
   }
 
+  async function handleGeneratePairingCode() {
+    try {
+      setPairingLoading(true)
+      setPairingError('')
+      setPairingCode('')
+
+      const res = await fetch(`${BOT_API_URL}/api/pairing-code`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ phoneNumber })
+      })
+      const data = await res.json()
+
+      if (!res.ok) {
+        throw new Error(data.error || 'Gagal membuat pairing code')
+      }
+      setPairingCode(data.pairingCode || '')
+    } catch (error) {
+      setPairingError(error.message || 'Gagal membuat pairing code')
+    } finally {
+      setPairingLoading(false)
+    }
+  }
+
   return (
     <DashboardLayout>
       <div className="max-w-lg mx-auto">
@@ -64,6 +92,11 @@ export default function QRPage() {
               ? 'WhatsApp Bot siap menerima pesan' 
               : 'Scan QR code di bawah untuk menghubungkan'}
           </p>
+          {!botStatus?.connected && botStatus?.disconnectReason === 405 && (
+            <p className="text-xs text-[#B91C1C] mt-2">
+              QR sering gagal muncul (error 405). Gunakan Pairing Code di bawah sebagai alternatif.
+            </p>
+          )}
           {botStatus?.connected && (
             <p className="text-xs text-[#737373] mt-2">
               Terhubung sejak: {botStatus.connected_at 
@@ -104,6 +137,43 @@ export default function QRPage() {
                 Refresh
               </button>
             </div>
+
+            {!qrCode && (
+              <div className="mt-6 border-t border-[#E5E5E5] pt-4 text-left">
+                <p className="text-xs font-semibold uppercase tracking-wider mb-2">Alternatif: Pairing Code</p>
+                <p className="text-xs text-[#737373] mb-3">
+                  Masukkan nomor WhatsApp bot (format internasional, contoh: 6281234567890), lalu tap Generate.
+                </p>
+                <div className="flex gap-2">
+                  <input
+                    type="text"
+                    value={phoneNumber}
+                    onChange={(e) => setPhoneNumber(e.target.value)}
+                    placeholder="628xxxxxxxxxx"
+                    className="flex-1 border-2 border-[#E5E5E5] px-3 py-2 text-sm"
+                  />
+                  <button
+                    onClick={handleGeneratePairingCode}
+                    disabled={pairingLoading || !phoneNumber.trim()}
+                    className="brutal-btn brutal-btn-primary text-sm"
+                  >
+                    {pairingLoading ? 'Generating...' : 'Generate'}
+                  </button>
+                </div>
+                {pairingError && (
+                  <p className="text-xs text-[#B91C1C] mt-2">{pairingError}</p>
+                )}
+                {pairingCode && (
+                  <div className="mt-3 p-3 border-2 border-[#E5E5E5] bg-white text-center">
+                    <p className="text-xs text-[#737373] mb-1">Pairing Code</p>
+                    <p className="text-xl tracking-[0.25em] font-bold">{pairingCode}</p>
+                    <p className="text-xs text-[#737373] mt-2">
+                      Di WhatsApp: Perangkat Tertaut → Tautkan dengan nomor telepon.
+                    </p>
+                  </div>
+                )}
+              </div>
+            )}
           </div>
         )}
 

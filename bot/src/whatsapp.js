@@ -33,8 +33,10 @@ const authStateDir = path.join(__dirname, '..', 'auth_info_baileys');
 let sock = null;
 let qrCode = null;
 let isConnected = false;
+let lastDisconnectReason = null;
 let reconnectTimer = null;
 let isStarting = false;
+let isResettingAuth = false;
 
 function extractDisconnectReason(lastDisconnect) {
   const error = lastDisconnect?.error;
@@ -50,6 +52,21 @@ function scheduleReconnect(io, delayMs = 3000) {
     reconnectTimer = null;
     startWhatsApp(io);
   }, delayMs);
+}
+
+function resetAuthStateDir() {
+  if (isResettingAuth) return;
+  isResettingAuth = true;
+  try {
+    fs.rmSync(authStateDir, { recursive: true, force: true });
+    fs.mkdirSync(authStateDir, { recursive: true });
+  } catch (error) {
+    console.error('Failed to reset auth directory:', error.message);
+  } finally {
+    setTimeout(() => {
+      isResettingAuth = false;
+    }, 1000);
+  }
 }
 
 async function startWhatsApp(io) {
@@ -81,6 +98,7 @@ async function startWhatsApp(io) {
 
     if (connection === 'close') {
       const { reason, error } = extractDisconnectReason(lastDisconnect);
+      lastDisconnectReason = reason;
       isConnected = false;
       await updateBotSession('disconnected');
       if (io) {
@@ -105,7 +123,7 @@ async function startWhatsApp(io) {
 
       if (shouldResetAuth) {
         console.log('❌ Logged out. Please re-scan QR.');
-        fs.rmSync(authStateDir, { recursive: true, force: true });
+        resetAuthStateDir();
         scheduleReconnect(io);
       } else {
         console.log('🔄 Reconnecting...', reason);
@@ -113,6 +131,7 @@ async function startWhatsApp(io) {
       }
     } else if (connection === 'open') {
       isConnected = true;
+      lastDisconnectReason = null;
       qrCode = null;
       await updateBotSession('connected');
       if (io) {
@@ -237,6 +256,19 @@ async function sendAdminMessage(phoneNumber, message) {
   return true;
 }
 
+async function requestPairingCode(phoneNumber) {
+  const digits = String(phoneNumber || '').replace(/\D/g, '');
+  if (!digits) {
+    throw new Error('Phone number is required');
+  }
+  if (!sock || typeof sock.requestPairingCode !== 'function') {
+    throw new Error('WhatsApp socket not ready');
+  }
+
+  const code = await sock.requestPairingCode(digits);
+  return code;
+}
+
 function getQRCode() {
   return qrCode;
 }
@@ -244,7 +276,8 @@ function getQRCode() {
 function getConnectionStatus() {
   return {
     connected: isConnected,
-    qr: qrCode
+    qr: qrCode,
+    disconnectReason: lastDisconnectReason
   };
 }
 
@@ -255,10 +288,14 @@ function getSocket() {
 module.exports = {
   startWhatsApp,
   sendAdminMessage,
+  requestPairingCode,
   getQRCode,
   getConnectionStatus,
   getSocket
 };
+
+
+
 
 
 

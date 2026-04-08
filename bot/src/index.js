@@ -5,7 +5,7 @@ const { Server } = require('socket.io');
 const cors = require('cors');
 const path = require('path');
 
-const { startWhatsApp, getQRCode, getConnectionStatus, sendAdminMessage } = require('./whatsapp');
+const { startWhatsApp, getQRCode, getConnectionStatus, sendAdminMessage, requestPairingCode } = require('./whatsapp');
 const {
   getChatHistory,
   getStats,
@@ -85,6 +85,16 @@ app.get('/api/qr', (req, res) => {
     res.json({ qr });
   } else {
     res.json({ qr: null });
+  }
+});
+
+app.post('/api/pairing-code', async (req, res) => {
+  try {
+    const { phoneNumber } = req.body || {};
+    const pairingCode = await requestPairingCode(phoneNumber);
+    res.json({ pairingCode });
+  } catch (error) {
+    res.status(400).json({ error: error.message || 'Failed to generate pairing code' });
   }
 });
 
